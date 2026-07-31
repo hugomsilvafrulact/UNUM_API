@@ -1,0 +1,61 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsArray, IsBoolean, IsOptional, ValidateIf, ValidateNested } from 'class-validator';
+import { OperacaoBaseDto } from './operacao-base.dto';
+import { CabecalhoEncomendaDto } from './cabecalho-encomenda.dto';
+import { ParceiroEncomendaDto } from './parceiro-encomenda.dto';
+import { LinhaEncomendaDto } from './linha-encomenda.dto';
+import { LinhaEncomendaAvisoDto } from './linha-encomenda-aviso.dto';
+import { PedidoEnvioAmostrasDto } from './pedido-envio-amostras.dto';
+
+/** Corpo de PATCH /encomendas/:numero - equivalente a AlterarEncomenda em Encomendas.cs (BAPI_SALESORDER_CHANGE). */
+export class AlterarEncomendaDto extends OperacaoBaseDto {
+  @ApiPropertyOptional({ description: 'Executa em modo de simulacao, sem persistir em SAP nem UNUM', default: false })
+  @IsOptional()
+  @IsBoolean()
+  simulacao?: boolean;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  gestaoOportunidades?: boolean;
+
+  @ApiProperty({ type: CabecalhoEncomendaDto })
+  @ValidateNested()
+  @Type(() => CabecalhoEncomendaDto)
+  cabecalho!: CabecalhoEncomendaDto;
+
+  @ApiProperty({
+    type: [ParceiroEncomendaDto],
+    description: 'Apenas parceiros com estadoUpdate="U" sao efetivamente enviados a SAP',
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ParceiroEncomendaDto)
+  parceiros!: ParceiroEncomendaDto[];
+
+  @ApiProperty({
+    type: [LinhaEncomendaDto],
+    description: 'Apenas linhas com estadoUpdate preenchido sao efetivamente enviadas a SAP',
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LinhaEncomendaDto)
+  linhas!: LinhaEncomendaDto[];
+
+  @ApiPropertyOptional({ type: [LinhaEncomendaAvisoDto], default: [] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => LinhaEncomendaAvisoDto)
+  linhasAvisos?: LinhaEncomendaAvisoDto[];
+
+  @ApiPropertyOptional({
+    type: PedidoEnvioAmostrasDto,
+    description: 'Obrigatorio quando gestaoOportunidades=true',
+  })
+  @ValidateIf((o) => o.gestaoOportunidades === true)
+  @ValidateNested()
+  @Type(() => PedidoEnvioAmostrasDto)
+  pedidoEnvioAmostras?: PedidoEnvioAmostrasDto;
+}

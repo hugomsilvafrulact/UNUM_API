@@ -1,0 +1,8 @@
+node_modules
+dist
+coverage
+.env
+*.log
+.git
+.gitignore
+nwrfc750P_18-70002755
