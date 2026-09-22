@@ -92,12 +92,12 @@ export function buildItemsCriar(linhas: LinhaEncomendaDto[], hardOrder: boolean,
 
   for (const linha of linhas) {
     const itemIn: RfcStructure = {
-      ITM_NUMBER: linha.linhaEncomenda,
+      ITM_NUMBER: String(linha.linhaEncomenda),
       MATERIAL: linha.sapMaterial,
       SHORT_TEXT: linha.descricaoMaterial ?? '',
       PLANT: linha.sapFabricaExpedicao,
       SHIP_POINT: linha.sapCodLocalExpedicao,
-      TARGET_QTY: linha.quantidadeUV,
+      TARGET_QTY: String(linha.quantidadeUV),
       TARGET_QU: linha.sapUnidadeVenda,
       SALES_UNIT: linha.sapUnidadeVenda,
       CUST_MAT35: linha.refCliente ?? '',
@@ -105,7 +105,7 @@ export function buildItemsCriar(linhas: LinhaEncomendaDto[], hardOrder: boolean,
       PO_ITM_NO: linha.linhaEncomendaCliente ?? '',
     };
     const itemInx: RfcStructure = {
-      ITM_NUMBER: linha.linhaEncomenda,
+      ITM_NUMBER: String(linha.linhaEncomenda),
       UPDATEFLAG: 'I',
       MATERIAL: 'X',
       SHORT_TEXT: 'X',
@@ -140,17 +140,17 @@ export function buildItemsCriar(linhas: LinhaEncomendaDto[], hardOrder: boolean,
 
     if (!hardOrder) {
       schedulesIn.push({
-        ITM_NUMBER: linha.linhaEncomenda,
-        SCHED_LINE: linha.subLinha,
+        ITM_NUMBER: String(linha.linhaEncomenda),
+        SCHED_LINE: String(linha.subLinha),
         REQ_DATE: linha.sapDataEntrega,
-        REQ_Qty: linha.quantidadeUV,
+        REQ_QTY: String(linha.quantidadeUV),
       });
       schedulesInx.push({
-        ITM_NUMBER: linha.linhaEncomenda,
-        SCHED_LINE: linha.subLinha,
+        ITM_NUMBER: String(linha.linhaEncomenda),
+        SCHED_LINE: String(linha.subLinha),
         UPDATEFLAG: 'I',
         REQ_DATE: 'X',
-        REQ_Qty: 'X',
+        REQ_QTY: 'X',
       });
     }
   }

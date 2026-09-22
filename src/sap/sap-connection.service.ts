@@ -1,7 +1,12 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client, Pool } from 'node-rfc';
 import { AppConfig } from '../config/configuration';
+import { dateFromABAP, dateToABAP } from './sap-date.util';
+
+const CLIENT_OPTIONS = {
+  date: { toABAP: dateToABAP, fromABAP: dateFromABAP },
+};
 
 /**
  * Gere um Pool de ligacoes RFC a SAP (node-rfc).
@@ -19,6 +24,7 @@ export interface SapUserOverride {
 
 @Injectable()
 export class SapConnectionService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(SapConnectionService.name);
   private pool!: Pool;
   private baseParams!: { ashost: string; sysnr: string; client: string; user: string; passwd: string; lang: string };
 
@@ -36,7 +42,7 @@ export class SapConnectionService implements OnModuleInit, OnModuleDestroy {
       lang: sap.lang,
     };
 
-    this.pool = new Pool({ connectionParameters: this.baseParams });
+    this.pool = new Pool({ connectionParameters: this.baseParams, clientOptions: CLIENT_OPTIONS });
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -56,20 +62,36 @@ export class SapConnectionService implements OnModuleInit, OnModuleDestroy {
     if (!userOverride) {
       const client = (await this.pool.acquire()) as Client;
 
-      try {
-        return await work(client);
-      } finally {
-        await this.pool.release(client);
-      }
+      return this.runAndCleanup(client, work, () => Promise.resolve(this.pool.release(client)));
     }
 
-    const client = new Client({ ...this.baseParams, user: userOverride.user, passwd: userOverride.password });
+    const client = new Client(
+      { ...this.baseParams, user: userOverride.user, passwd: userOverride.password },
+      CLIENT_OPTIONS,
+    );
     await client.open();
 
+    return this.runAndCleanup(client, work, () => Promise.resolve(client.close()));
+  }
+
+  /**
+   * Corre `work` e garante a limpeza da ligacao, sem deixar uma falha na limpeza
+   * (ex: "Client release() invoked for already closed client", quando a ligacao
+   * cai entretanto - por exemplo presa num breakpoint ABAP) mascarar o erro real de `work`.
+   */
+  private async runAndCleanup<T>(
+    client: Client,
+    work: (client: Client) => Promise<T>,
+    cleanup: () => Promise<unknown>,
+  ): Promise<T> {
     try {
       return await work(client);
     } finally {
-      await client.close();
+      try {
+        await cleanup();
+      } catch (cleanupError) {
+        this.logger.warn(`Falha ao libertar/fechar a ligacao RFC: ${(cleanupError as Error).message}`);
+      }
     }
   }
 }

@@ -1,16 +1,10 @@
-/** Replica String.Format("{0:dd/MM/yyyy}", ...) usado em Encomendas.cs antes de passar datas as stored procedures. */
-export function formatDateDdMmYyyy(date?: Date): string {
-  if (!date) return '';
-
-  const dd = String(date.getDate()).padStart(2, '0');
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const yyyy = date.getFullYear();
-
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-/** Replica String.Format("{0:MM/dd/yyyy}", ...) usado nas chamadas GO_*PedidoEnvioAmostra*. */
-export function formatDateMmDdYyyy(date?: Date): string {
+/**
+ * Formata a data para "MM/dd/yyyy" antes de a passar como string a uma stored procedure.
+ * Confirmado com o dono das stored procedures (2026-09-22): a sessao SQL do login SalesOrderAPI
+ * espera datas neste formato (DATEFORMAT mdy), independentemente do que Encomendas.cs usava
+ * originalmente para o login da app desktop.
+ */
+export function formatDateSql(date?: Date): string {
   if (!date) return '';
 
   const dd = String(date.getDate()).padStart(2, '0');

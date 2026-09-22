@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RfcStructure, RfcTable } from 'node-rfc';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { AppConfig } from '../config/configuration';
 import { SapConnectionService, SapUserOverride } from '../sap/sap-connection.service';
 import { BAPI } from '../sap/sap.constants';
@@ -28,6 +28,8 @@ import { ParceiroEncomendaResponseDto } from './dto/parceiro-encomenda.dto';
 
 @Injectable()
 export class EncomendasService {
+  private readonly logger = new Logger(EncomendasService.name);
+
   constructor(
     private readonly sap: SapConnectionService,
     private readonly dataSource: DataSource,
@@ -41,6 +43,28 @@ export class EncomendasService {
 
   private idioma(dto: OperacaoBaseDto): string {
     return dto.idioma ?? this.configService.get('application', { infer: true }).defaultLang;
+  }
+
+  /**
+   * Valor usado no parametro @Utilizador das stored procedures UNUM.
+   * Por indicacao explicita (2026-09-22): usa o login tecnico SQL (DB_USER), nao o
+   * utilizador de negocio de dto.utilizador.
+   */
+  private sqlUser(): string {
+    return this.configService.get('database', { infer: true }).username;
+  }
+
+  /**
+   * Faz rollback da transacao SQL sem deixar uma falha no rollback (ex: "Transaction has been
+   * aborted" quando o SQL Server ja marcou a transacao como abortada por um erro grave anterior)
+   * mascarar o erro real que despoletou o rollback.
+   */
+  private async safeRollback(qr: QueryRunner): Promise<void> {
+    try {
+      await qr.rollbackTransaction();
+    } catch (err) {
+      this.logger.warn(`Falha ao fazer rollback da transacao SQL: ${(err as Error).message}`);
+    }
   }
 
   /** Equivalente a CriarEncomenda (BAPI_SALESORDER_CREATEFROMDAT2). */
@@ -98,14 +122,14 @@ export class EncomendasService {
 
         try {
           if (sucesso && !gestaoOportunidades) {
-            const r = await this.repo.criaMantemCabecalho(qr, numeroEncomenda, dto.cabecalho);
+            const r = await this.repo.criaMantemCabecalho(qr, numeroEncomenda, dto.cabecalho, this.sqlUser(), dto.computador);
             sucesso = r.sucesso;
             mensagemErro = r.mensagemErro;
           }
 
           if (sucesso && !gestaoOportunidades) {
             for (const parceiro of parceirosResposta) {
-              const r = await this.repo.criaMantemParceiro(qr, numeroEncomenda, parceiro, dto.utilizador);
+              const r = await this.repo.criaMantemParceiro(qr, numeroEncomenda, parceiro, this.sqlUser());
               sucesso = r.sucesso;
               mensagemErro = r.mensagemErro;
               if (!sucesso) break;
@@ -122,7 +146,7 @@ export class EncomendasService {
                 numeroEncomenda,
                 linha,
                 temAviso ? 2 : 1,
-                dto.utilizador,
+                this.sqlUser(),
                 dto.computador,
               );
               sucesso = r.sucesso;
@@ -133,7 +157,7 @@ export class EncomendasService {
 
           if (sucesso && !gestaoOportunidades) {
             for (const aviso of dto.linhasAvisos ?? []) {
-              const r = await this.repo.criaMantemLinhaAviso(qr, numeroEncomenda, aviso, dto.utilizador);
+              const r = await this.repo.criaMantemLinhaAviso(qr, numeroEncomenda, aviso, this.sqlUser());
               sucesso = r.sucesso;
               mensagemErro = r.mensagemErro;
               if (!sucesso) break;
@@ -149,7 +173,7 @@ export class EncomendasService {
                 dto.pedidoEnvioAmostras,
                 numeroEncomenda,
                 primeiraLinha,
-                dto.utilizador,
+                this.sqlUser(),
                 this.idioma(dto),
               );
               sucesso = r.sucesso;
@@ -160,7 +184,7 @@ export class EncomendasService {
                 dto.pedidoEnvioAmostras,
                 numeroEncomenda,
                 primeiraLinha,
-                dto.utilizador,
+                this.sqlUser(),
                 this.idioma(dto),
               );
               sucesso = r.sucesso;
@@ -173,14 +197,14 @@ export class EncomendasService {
             await client.call(BAPI.TRANSACTION_COMMIT, { WAIT: 'X' });
           } else {
             numeroEncomenda = '';
-            await qr.rollbackTransaction();
+            await this.safeRollback(qr);
             await client.call(BAPI.TRANSACTION_ROLLBACK, {});
           }
         } catch (e) {
           sucesso = false;
           numeroEncomenda = '';
           mensagemErro = (e as Error).message;
-          await qr.rollbackTransaction();
+          await this.safeRollback(qr);
           await client.call(BAPI.TRANSACTION_ROLLBACK, {});
         } finally {
           await qr.release();
@@ -215,22 +239,22 @@ export class EncomendasService {
       };
 
       const orderItemsIn = dto.linhas.map((linha) => ({
-        ITM_NUMBER: linha.linhaEncomenda,
+        ITM_NUMBER: String(linha.linhaEncomenda),
         MATERIAL: linha.sapMaterial,
         SHORT_TEXT: linha.descricaoMaterial ?? '',
         PLANT: linha.sapFabricaExpedicao,
         SHIP_POINT: linha.sapCodLocalExpedicao,
-        TARGET_QTY: linha.quantidadeUV,
+        TARGET_QTY: String(linha.quantidadeUV),
         TARGET_QU: linha.sapUnidadeVenda,
         CUST_MAT35: linha.refCliente ?? '',
       }));
 
       const orderScheduleIn = dto.linhas.map((linha) => ({
-        ITM_NUMBER: linha.linhaEncomenda,
-        SCHED_LINE: linha.subLinha,
+        ITM_NUMBER: String(linha.linhaEncomenda),
+        SCHED_LINE: String(linha.subLinha),
         REQ_DATE: linha.sapDataEntrega,
         DLV_DATE: linha.sapDataEntrega,
-        REQ_QTY: linha.quantidadeUV,
+        REQ_QTY: String(linha.quantidadeUV),
       }));
 
       const result = await client.call(BAPI.SALESORDER_SIMULATE, {
@@ -344,7 +368,7 @@ export class EncomendasService {
           SHORT_TEXT: linha.descricaoMaterial ?? '',
           PLANT: linha.sapFabricaExpedicao,
           SHIP_POINT: linha.sapCodLocalExpedicao,
-          TARGET_QTY: linha.quantidadeUV,
+          TARGET_QTY: String(linha.quantidadeUV),
           TARGET_QU: linha.sapUnidadeVenda,
           SALES_UNIT: linha.sapUnidadeVenda,
           CUST_MAT35: linha.refCliente ?? '',
@@ -398,14 +422,14 @@ export class EncomendasService {
             ITM_NUMBER: itmNumber,
             SCHED_LINE: schedLine,
             REQ_DATE: linha.sapDataEntrega,
-            REQ_Qty: linha.quantidadeUV,
+            REQ_QTY: String(linha.quantidadeUV),
           });
           schedulesInx.push({
             ITM_NUMBER: itmNumber,
             SCHED_LINE: schedLine,
             UPDATEFLAG: linha.estadoUpdate,
             REQ_DATE: 'X',
-            REQ_Qty: 'X',
+            REQ_QTY: 'X',
           });
         }
       }
@@ -439,14 +463,14 @@ export class EncomendasService {
 
         try {
           if (sucesso && !gestaoOportunidades) {
-            const r = await this.repo.criaMantemCabecalho(qr, numero, dto.cabecalho);
+            const r = await this.repo.criaMantemCabecalho(qr, numero, dto.cabecalho, this.sqlUser(), dto.computador);
             sucesso = r.sucesso;
             mensagemErro = r.mensagemErro;
           }
 
           if (sucesso && !gestaoOportunidades) {
             for (const parceiro of dto.parceiros) {
-              const r = await this.repo.criaMantemParceiro(qr, numero, parceiro, dto.utilizador);
+              const r = await this.repo.criaMantemParceiro(qr, numero, parceiro, this.sqlUser());
               sucesso = r.sucesso;
               mensagemErro = r.mensagemErro;
               if (!sucesso) break;
@@ -465,7 +489,7 @@ export class EncomendasService {
                 numero,
                 linha,
                 temAviso ? 2 : 1,
-                dto.utilizador,
+                this.sqlUser(),
                 dto.computador,
               );
               sucesso = r.sucesso;
@@ -476,7 +500,7 @@ export class EncomendasService {
 
           if (sucesso && !gestaoOportunidades) {
             for (const aviso of dto.linhasAvisos ?? []) {
-              const r = await this.repo.criaMantemLinhaAviso(qr, numero, aviso, dto.utilizador);
+              const r = await this.repo.criaMantemLinhaAviso(qr, numero, aviso, this.sqlUser());
               sucesso = r.sucesso;
               mensagemErro = r.mensagemErro;
               if (!sucesso) break;
@@ -489,7 +513,7 @@ export class EncomendasService {
               dto.pedidoEnvioAmostras,
               numero,
               dto.linhas[0].linhaEncomenda,
-              dto.utilizador,
+              this.sqlUser(),
               this.idioma(dto),
             );
             sucesso = r.sucesso;
@@ -500,13 +524,13 @@ export class EncomendasService {
             await qr.commitTransaction();
             await client.call(BAPI.TRANSACTION_COMMIT, { WAIT: 'X' });
           } else {
-            await qr.rollbackTransaction();
+            await this.safeRollback(qr);
             await client.call(BAPI.TRANSACTION_ROLLBACK, {});
           }
         } catch (e) {
           sucesso = false;
           mensagemErro = (e as Error).message;
-          await qr.rollbackTransaction();
+          await this.safeRollback(qr);
           await client.call(BAPI.TRANSACTION_ROLLBACK, {});
         } finally {
           await qr.release();
@@ -537,13 +561,13 @@ export class EncomendasService {
 
       try {
         if (sucesso && !gestaoOportunidades) {
-          const r = await this.repo.anulaEncomenda(qr, numero, dto.entidade, dto.motivo, dto.utilizador, dto.computador);
+          const r = await this.repo.anulaEncomenda(qr, numero, dto.entidade, dto.motivo, this.sqlUser(), dto.computador);
           sucesso = r.sucesso;
           mensagemErro = r.mensagemErro;
         }
 
         if (sucesso && gestaoOportunidades && dto.pedidoEnvioAmostras) {
-          const r = await this.repo.goEliminaEncomenda(qr, dto.pedidoEnvioAmostras, dto.utilizador);
+          const r = await this.repo.goEliminaEncomenda(qr, dto.pedidoEnvioAmostras, this.sqlUser());
           sucesso = r.sucesso;
           mensagemErro = r.mensagemErro;
         }
@@ -552,13 +576,13 @@ export class EncomendasService {
           await qr.commitTransaction();
           await client.call(BAPI.TRANSACTION_COMMIT, { WAIT: 'X' });
         } else {
-          await qr.rollbackTransaction();
+          await this.safeRollback(qr);
           await client.call(BAPI.TRANSACTION_ROLLBACK, {});
         }
       } catch (e) {
         sucesso = false;
         mensagemErro = (e as Error).message;
-        await qr.rollbackTransaction();
+        await this.safeRollback(qr);
         await client.call(BAPI.TRANSACTION_ROLLBACK, {});
       } finally {
         await qr.release();
@@ -591,8 +615,8 @@ export class EncomendasService {
           const result = await client.call(BAPI.SALESORDER_CHANGE, {
             SALESDOCUMENT: padSapNumber(numero),
             ORDER_HEADER_INX: { UPDATEFLAG: 'U' },
-            ORDER_ITEM_IN: [{ ITM_NUMBER: linha.LinhaEncomenda, REASON_REJ: dto.sapMotivoFecho }],
-            ORDER_ITEM_INX: [{ ITM_NUMBER: linha.LinhaEncomenda, UPDATEFLAG: 'U', REASON_REJ: 'X' }],
+            ORDER_ITEM_IN: [{ ITM_NUMBER: String(linha.LinhaEncomenda), REASON_REJ: dto.sapMotivoFecho }],
+            ORDER_ITEM_INX: [{ ITM_NUMBER: String(linha.LinhaEncomenda), UPDATEFLAG: 'U', REASON_REJ: 'X' }],
           });
 
           const erros = extractBapiErrors(result.RETURN);
@@ -604,12 +628,12 @@ export class EncomendasService {
 
         if (sucesso) {
           await qr.startTransaction();
-          const r = await this.repo.fechaEncomenda(qr, numero, dto.utilizador, dto.computador);
+          const r = await this.repo.fechaEncomenda(qr, numero, this.sqlUser(), dto.computador);
           sucesso = r.sucesso;
           mensagemErro = r.mensagemErro;
 
           if (sucesso) await qr.commitTransaction();
-          else await qr.rollbackTransaction();
+          else await this.safeRollback(qr);
         }
 
         if (sucesso) {
@@ -680,13 +704,13 @@ export class EncomendasService {
             dto.entidade,
             dto.motivo,
             dto.codigoMP,
-            dto.utilizador,
+            this.sqlUser(),
           );
           sucesso = r.sucesso;
           mensagemErro = r.mensagemErro;
 
           if (sucesso) await qr.commitTransaction();
-          else await qr.rollbackTransaction();
+          else await this.safeRollback(qr);
         }
 
         if (sucesso) {

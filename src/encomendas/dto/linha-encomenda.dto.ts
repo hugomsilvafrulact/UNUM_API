@@ -61,8 +61,8 @@ export class LinhaEncomendaDto {
 
   @ApiPropertyOptional({ description: 'Fabrica de origem UNUM' })
   @IsOptional()
-  @IsString()
-  unumCodFabrica?: string;
+  @IsNumber()
+  unumCodFabrica?: number;
 
   @ApiProperty({ description: 'Local de expedicao SAP (SHIP_POINT)' })
   @IsString()
@@ -79,8 +79,8 @@ export class LinhaEncomendaDto {
 
   @ApiPropertyOptional({ description: 'Unidade de venda UNUM' })
   @IsOptional()
-  @IsString()
-  unumUnidadeVenda?: string;
+  @IsNumber()
+  unumUnidadeVenda?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -222,23 +222,23 @@ export class LinhaEncomendaDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
-  entidadeResponsavelUrgencia?: string;
+  @IsNumber()
+  entidadeResponsavelUrgencia?: number;
 
-  @ApiPropertyOptional({ description: 'Indicativo (uso interno UNUM)' })
+  @ApiPropertyOptional({ description: 'Indicativo (uso interno UNUM)', default: false })
   @IsOptional()
-  @IsString()
-  ti?: string;
+  @IsBoolean()
+  ti?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Entidade responsavel pela alteracao (apenas em AlterarEncomenda)' })
   @IsOptional()
-  @IsString()
-  unumEntidadeAlteracao?: string;
+  @IsNumber()
+  unumEntidadeAlteracao?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Motivo da alteracao (apenas em AlterarEncomenda)' })
   @IsOptional()
-  @IsString()
-  unumMotivoAlteracao?: string;
+  @IsNumber()
+  unumMotivoAlteracao?: number;
 
   // --- MTO/MTS e lead times ---
   @ApiPropertyOptional({ default: false })

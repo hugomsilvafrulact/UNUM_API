@@ -5,7 +5,7 @@ import { ParceiroEncomendaDto } from './dto/parceiro-encomenda.dto';
 import { LinhaEncomendaDto } from './dto/linha-encomenda.dto';
 import { LinhaEncomendaAvisoDto } from './dto/linha-encomenda-aviso.dto';
 import { PedidoEnvioAmostrasDto } from './dto/pedido-envio-amostras.dto';
-import { bit, formatDateDdMmYyyy, formatDateMmDdYyyy } from './encomendas-sql.util';
+import { bit, formatDateSql } from './encomendas-sql.util';
 
 export interface SpResult {
   sucesso: boolean;
@@ -15,37 +15,39 @@ export interface SpResult {
 /**
  * Chama as stored procedures DAL.AcessData_DB.ENCOMENDAS_... e GO_... usadas por Encomendas.cs.
  *
- * IMPORTANTE: o codigo original chama estas procedures atraves de uma camada DAL (DAL.AcessData_DB)
- * cujo codigo-fonte nao esta disponivel aqui - so se conhece a assinatura (ordem dos parametros)
- * a partir das chamadas em Encomendas.cs. runProcedure() assume que cada procedure devolve um
- * result set de 1 linha com colunas Sucesso (bit) e MensagemErro (nvarchar); confirma/ajusta este
- * contrato de acordo com a definicao real das stored procedures em SQL Server.
+ * Confirmado via sys.parameters que estas procedures nao tem parametros de saida nem devolvem
+ * result set (ex: ENCOMENDAS_CriaMantem) - o contrato e o mesmo que o DAL.AcessData_DB original
+ * em C# usa tipicamente: ExecuteNonQuery() sem excecao = sucesso; excecao SQL = insucesso,
+ * com a mensagem da excecao como MensagemErro.
  */
 @Injectable()
 export class EncomendasRepository {
   private async runProcedure(qr: QueryRunner, procedure: string, params: unknown[]): Promise<SpResult> {
     const placeholders = params.map((_, i) => `@${i}`).join(', ');
-    const rows: Array<{ Sucesso?: boolean | number; MensagemErro?: string }> = await qr.query(
-      `EXEC dbo.${procedure} ${placeholders}`,
-      params,
-    );
-    const row = rows?.[0];
 
-    return {
-      sucesso: row ? Boolean(row.Sucesso) : false,
-      mensagemErro: row?.MensagemErro ?? '',
-    };
+    try {
+      await qr.query(`EXEC dbo.${procedure} ${placeholders}`, params);
+      return { sucesso: true, mensagemErro: '' };
+    } catch (err) {
+      const sqlErr = err as Error & { procName?: string; lineNumber?: number; number?: number };
+      return {
+        sucesso: false,
+        mensagemErro: `${sqlErr.message} (proc=${sqlErr.procName ?? '?'}, linha=${sqlErr.lineNumber ?? '?'}, erro=${sqlErr.number ?? '?'})`,
+      };
+    }
   }
 
   criaMantemCabecalho(
     qr: QueryRunner,
     numeroEncomenda: string,
     cabecalho: CabecalhoEncomendaDto,
+    utilizador: string,
+    computador: string,
   ): Promise<SpResult> {
     return this.runProcedure(qr, 'ENCOMENDAS_CriaMantem', [
       numeroEncomenda,
       cabecalho.unumCodEmpresa,
-      formatDateDdMmYyyy(cabecalho.dataEncomenda),
+      formatDateSql(cabecalho.dataEncomenda),
       cabecalho.encomendaCliente,
       cabecalho.encomendaClienteRecebedor ?? '',
       cabecalho.observacoes ?? '',
@@ -55,6 +57,8 @@ export class EncomendasRepository {
       cabecalho.sapSetorAtividade,
       '0',
       bit(cabecalho.hardOrder),
+      utilizador,
+      computador,
     ]);
   }
 
@@ -104,13 +108,13 @@ export class EncomendasRepository {
       linha.pesoLiquido ?? 0,
       linha.codEmbalagem ?? '',
       linha.sapUnidadeVenda,
-      linha.unumUnidadeVenda ?? '',
+      linha.unumUnidadeVenda ?? 0,
       linha.sapUnVendaNumerador ?? 0,
       linha.sapUnVendaDenominador ?? 0,
-      formatDateDdMmYyyy(linha.dataEntrega),
-      formatDateDdMmYyyy(linha.dataExpedicao),
+      formatDateSql(linha.dataEntrega),
+      formatDateSql(linha.dataExpedicao),
       linha.sapCodFabrica ?? '',
-      linha.unumCodFabrica ?? '',
+      linha.unumCodFabrica ?? 0,
       linha.sapPreco ?? 0,
       linha.sapMoeda ?? '',
       linha.sapPrecoQtd ?? 0,
@@ -118,12 +122,12 @@ export class EncomendasRepository {
       linha.sapIncoterms1 ?? '',
       linha.sapIncoterms2 ?? '',
       linha.sapCondPagamento ?? '',
-      linha.ti ?? '',
+      bit(linha.ti),
       linha.estadoUpdate ?? '',
-      linha.unumEntidadeAlteracao ?? '',
-      linha.unumMotivoAlteracao ?? '',
+      linha.unumEntidadeAlteracao ?? 0,
+      linha.unumMotivoAlteracao ?? 0,
       linha.codigoMP ?? '',
-      formatDateDdMmYyyy(linha.dataPedidaCliente),
+      formatDateSql(linha.dataPedidaCliente),
       linha.qdePedidaCliente ?? 0,
       linha.leadTimeContratadoMTO ?? 0,
       linha.leadTimeContratadoMTS ?? 0,
@@ -141,12 +145,12 @@ export class EncomendasRepository {
       linha.diasAnaliseProduto ?? 0,
       linha.diasViagemRecebedor ?? 0,
       estadoLinhaEncomenda,
-      formatDateDdMmYyyy(linha.dataInsercaoLinhaEncomenda),
+      formatDateSql(linha.dataInsercaoLinhaEncomenda),
       bit(linha.urgente),
-      linha.entidadeResponsavelUrgencia ?? '',
+      linha.entidadeResponsavelUrgencia ?? 0,
       linha.refCliente ?? '',
       linha.sapCodLocalExpedicao,
-      String(linha.unumFabricaExpedicao),
+      linha.unumFabricaExpedicao,
       linha.sapFabricaExpedicao,
       bit(linha.trade),
       bit(linha.consignacao),
@@ -229,8 +233,8 @@ export class EncomendasRepository {
       `EXEC dbo.GO_ins_PedidoEnvioAmostras_WOUT_TRANS @0, @1, @2, @3, @4, @5, @6, @7, @8, @9, @10, @11, @12, @13, @14, @15`,
       [
         pedido.idProjectoComercial,
-        formatDateMmDdYyyy(pedido.dataPedido),
-        formatDateMmDdYyyy(pedido.dataLimiteEnvio),
+        formatDateSql(pedido.dataPedido),
+        formatDateSql(pedido.dataLimiteEnvio),
         pedido.qdeEmbalagens,
         pedido.codEmbalagem,
         pedido.codCliente,
@@ -262,7 +266,7 @@ export class EncomendasRepository {
     return this.runProcedure(qr, 'GO_upd_PedidoEnvioAmostra_WOUT_TRANS', [
       pedido.idPedido,
       pedido.idProjectoComercial,
-      formatDateMmDdYyyy(pedido.dataLimiteEnvio),
+      formatDateSql(pedido.dataLimiteEnvio),
       pedido.codEmbalagem,
       pedido.codCliente,
       pedido.codContacto,
@@ -273,7 +277,7 @@ export class EncomendasRepository {
       pedido.abandonarPedido ? (pedido.motivoAbandono ?? '') : '',
       pedido.numMorada,
       pedido.motivoAlteracao ?? '',
-      formatDateMmDdYyyy(pedido.dataPedido),
+      formatDateSql(pedido.dataPedido),
       pedido.tipoEntidade,
       idioma,
       pedido.centroDesenvolvimento,

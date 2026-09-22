@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNumber, IsString } from 'class-validator';
+import { IsNumber } from 'class-validator';
 
 /** Mapeia LinhasEncomendasAvisos usado em Encomendas.cs (ENCOMENDAS_CriaMantem_Linhas_Avisos). */
 export class LinhaEncomendaAvisoDto {
@@ -12,6 +12,6 @@ export class LinhaEncomendaAvisoDto {
   subLinha!: number;
 
   @ApiProperty({ description: 'Identificador da mensagem de aviso' })
-  @IsString()
-  idMensagem!: string;
+  @IsNumber()
+  idMensagem!: number;
 }
